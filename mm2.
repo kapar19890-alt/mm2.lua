@@ -1,117 +1,141 @@
 -- ============================================================
---  MM2 UTILITY SCRIPT | ESP + SKYBOX + SHERIFF AIMBOT
+--  MM2 UTILITY SCRIPT v2 | ESP + GUI + SKYBOX + AIMBOT
 --  Target: Murder Mystery 2 (Roblox)
 --  Env: Client-side Lua, executor environment
---  Required privs: getgenv, hookmetamethod or Drawing API
---  Side effects: modifies Lighting, draws over viewport
+--  GUI: custom draggable ScreenGui
+--  ESP fix: no distance limit, always visible through walls
 -- ============================================================
 
-local Players      = game:GetService("Players")
-local RunService   = game:GetService("RunService")
+local Players          = game:GetService("Players")
+local RunService       = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
-local Lighting     = game:GetService("Lighting")
-local Camera       = workspace.CurrentCamera
-local LocalPlayer  = Players.LocalPlayer
+local Lighting         = game:GetService("Lighting")
+local TweenService     = game:GetService("TweenService")
+local Camera           = workspace.CurrentCamera
+local LocalPlayer      = Players.LocalPlayer
 
--- *fingers tapping the desk* config block, tune to taste
+-- ============================================================
+--  CONFIG
+-- ============================================================
+
 local CFG = {
     ESP = {
-        enabled    = true,
-        innocent   = { color = Color3.fromRGB(0, 255, 80),  label = "[INNOCENT]" },
-        sheriff    = { color = Color3.fromRGB(0, 120, 255), label = "[SHERIFF]"  },
-        murderer   = { color = Color3.fromRGB(255, 30, 30), label = "[MURDERER]" },
-        box        = true,
-        tracers    = true,
-        names      = true,
-        distance   = true,
-        maxDist    = 1000,
+        enabled  = true,
+        innocent = { color = Color3.fromRGB(0, 255, 80),  label = "INNOCENT" },
+        sheriff  = { color = Color3.fromRGB(0, 120, 255), label = "SHERIFF"  },
+        murderer = { color = Color3.fromRGB(255, 30, 30), label = "MURDERER" },
+        box      = true,
+        tracers  = true,
+        names    = true,
+        distance = true,
+        -- NO max distance, always visible
     },
     AIMBOT = {
-        enabled    = true,
-        key        = Enum.KeyCode.Q,   -- hold Q to lock
-        fov        = 180,              -- full screen, pure lock
-        smoothing  = 0.08,            -- lower = snappier (0.04 = instant)
-        bone       = "Head",
+        enabled   = true,
+        key       = Enum.KeyCode.Q,
+        smoothing = 0.08,
+        bone      = "Head",
     },
     SKYBOX = {
+        current = "Default",
         presets = {
-            Default  = { SkyboxBk="rbxasset://sky/sky512_bk.tex",  SkyboxDn="rbxasset://sky/sky512_dn.tex",  SkyboxFt="rbxasset://sky/sky512_ft.tex",  SkyboxLf="rbxasset://sky/sky512_lf.tex",  SkyboxRt="rbxasset://sky/sky512_rt.tex",  SkyboxUp="rbxasset://sky/sky512_up.tex"  },
-            Night    = { SkyboxBk="rbxassets://textures/sky/sky512_bk.tex", SkyboxDn="rbxassets://textures/sky/sky512_dn.tex", SkyboxFt="rbxassets://textures/sky/sky512_ft.tex", SkyboxLf="rbxassets://textures/sky/sky512_lf.tex", SkyboxRt="rbxassets://textures/sky/sky512_rt.tex", SkyboxUp="rbxassets://textures/sky/sky512_up.tex" },
-            Bliss    = { SkyboxBk="rbxassetid://1012511953", SkyboxDn="rbxassetid://1012511953", SkyboxFt="rbxassetid://1012511953", SkyboxLf="rbxassetid://1012511953", SkyboxRt="rbxassetid://1012511953", SkyboxUp="rbxassetid://1012511953" },
-            Blood    = { SkyboxBk="rbxassetid://6444320972", SkyboxDn="rbxassetid://6444320972", SkyboxFt="rbxassetid://6444320972", SkyboxLf="rbxassetid://6444320972", SkyboxRt="rbxassetid://6444320972", SkyboxUp="rbxassetid://6444320972" },
+            Default = {
+                SkyboxBk = "rbxasset://sky/sky512_bk.tex",
+                SkyboxDn = "rbxasset://sky/sky512_dn.tex",
+                SkyboxFt = "rbxasset://sky/sky512_ft.tex",
+                SkyboxLf = "rbxasset://sky/sky512_lf.tex",
+                SkyboxRt = "rbxasset://sky/sky512_rt.tex",
+                SkyboxUp = "rbxasset://sky/sky512_up.tex",
+            },
+            Night = {
+                SkyboxBk = "rbxassetid://6444320972",
+                SkyboxDn = "rbxassetid://6444320972",
+                SkyboxFt = "rbxassetid://6444320972",
+                SkyboxLf = "rbxassetid://6444320972",
+                SkyboxRt = "rbxassetid://6444320972",
+                SkyboxUp = "rbxassetid://6444320972",
+            },
+            Blood = {
+                SkyboxBk = "rbxassetid://6506579687",
+                SkyboxDn = "rbxassetid://6506579687",
+                SkyboxFt = "rbxassetid://6506579687",
+                SkyboxLf = "rbxassetid://6506579687",
+                SkyboxRt = "rbxassetid://6506579687",
+                SkyboxUp = "rbxassetid://6506579687",
+            },
+            Bliss = {
+                SkyboxBk = "rbxassetid://1012511953",
+                SkyboxDn = "rbxassetid://1012511953",
+                SkyboxFt = "rbxassetid://1012511953",
+                SkyboxLf = "rbxassetid://1012511953",
+                SkyboxRt = "rbxassetid://1012511953",
+                SkyboxUp = "rbxassetid://1012511953",
+            },
         }
     }
 }
 
 -- ============================================================
 --  ROLE DETECTION
---  MM2 stores role in a StringValue inside LocalPlayer
---  path: LocalPlayer.PlayerGui or LocalPlayer itself
---  we scan both + remote tag table approach
 -- ============================================================
 
 local function getRole(player)
-    -- *leaning into the screen* MM2 uses a tag system
-    -- roles broadcast via CollectionService or IntValue in character
     local cs = game:GetService("CollectionService")
     if cs:HasTag(player, "Murderer") then return "murderer" end
     if cs:HasTag(player, "Sheriff")  then return "sheriff"  end
-    return "innocent"
-end
-
--- fallback: scan PlayerGui for role GUI text (MM2 classic tells you via HUD)
-local function getRoleFallback(player)
-    local pg = player:FindFirstChild("PlayerGui")
-    if not pg then return "innocent" end
-    for _, gui in ipairs(pg:GetDescendants()) do
-        if gui:IsA("TextLabel") then
-            local t = gui.Text:lower()
-            if t:find("murderer") then return "murderer" end
-            if t:find("sheriff")  then return "sheriff"  end
+    -- fallback: scan tools in character
+    local char = player.Character
+    if char then
+        for _, tool in ipairs(char:GetChildren()) do
+            if tool:IsA("Tool") then
+                local name = tool.Name:lower()
+                if name:find("knife") or name:find("murder") then return "murderer" end
+                if name:find("gun")   or name:find("sheriff") then return "sheriff"  end
+            end
         end
     end
     return "innocent"
 end
 
 -- ============================================================
---  ESP DRAWING LAYER
---  Using Drawing API (synapse/krnl/fluxus standard)
+--  ESP — Drawing API, no distance cap, always on top
 -- ============================================================
 
-local espObjects = {}   -- [player] = { box, tracer, label }
+local espObjects = {}
 
 local function newDraw(type_, props)
     local d = Drawing.new(type_)
-    for k,v in pairs(props) do d[k] = v end
+    for k, v in pairs(props) do d[k] = v end
     return d
 end
 
 local function buildESP(player)
     if player == LocalPlayer then return end
-    local role = getRole(player)
-    if role == "innocent" and not CFG.ESP.innocent then return end
-
-    local col = CFG.ESP[role].color
-
     local obj = {}
 
-    if CFG.ESP.box then
-        obj.boxOutline = newDraw("Square", { Visible=false, Filled=false, Color=Color3.new(0,0,0), Thickness=3 })
-        obj.box        = newDraw("Square", { Visible=false, Filled=false, Color=col, Thickness=1.5 })
-    end
+    -- box outline (black border for visibility)
+    obj.boxOut = newDraw("Square", { Visible=false, Filled=false, Color=Color3.new(0,0,0), Thickness=3, ZIndex=1 })
+    obj.box    = newDraw("Square", { Visible=false, Filled=false, Color=Color3.new(1,1,1), Thickness=1.5, ZIndex=2 })
 
-    if CFG.ESP.tracers then
-        obj.tracerOutline = newDraw("Line", { Visible=false, Color=Color3.new(0,0,0), Thickness=3 })
-        obj.tracer        = newDraw("Line", { Visible=false, Color=col, Thickness=1.5 })
-    end
+    -- tracer
+    obj.tracerOut = newDraw("Line", { Visible=false, Color=Color3.new(0,0,0), Thickness=3, ZIndex=1 })
+    obj.tracer    = newDraw("Line", { Visible=false, Color=Color3.new(1,1,1), Thickness=1.5, ZIndex=2 })
 
-    if CFG.ESP.names then
-        obj.label = newDraw("Text", {
-            Visible=false, Center=true, Outline=true,
-            Size=14, Font=2, Color=col,
-            Text=CFG.ESP[role].label .. " " .. player.Name
-        })
-    end
+    -- name + role label
+    obj.label = newDraw("Text", {
+        Visible=false, Center=true, Outline=true,
+        Size=15, Font=2,
+        Color=Color3.new(1,1,1),
+        Text=""
+    })
+
+    -- distance label
+    obj.distLabel = newDraw("Text", {
+        Visible=false, Center=true, Outline=true,
+        Size=12, Font=2,
+        Color=Color3.fromRGB(200,200,200),
+        Text=""
+    })
 
     espObjects[player] = obj
 end
@@ -125,219 +149,493 @@ end
 
 local function updateESP()
     for player, obj in pairs(espObjects) do
+        if not CFG.ESP.enabled then
+            for _, d in pairs(obj) do d.Visible = false end
+            continue
+        end
+
         local char = player.Character
         local root = char and char:FindFirstChild("HumanoidRootPart")
         local head = char and char:FindFirstChild("Head")
-        if not root or not head then
-            for _, d in pairs(obj) do d.Visible = false end
-            continue
-        end
+        local hum  = char and char:FindFirstChildOfClass("Humanoid")
 
-        local dist = (Camera.CFrame.Position - root.Position).Magnitude
-        if dist > CFG.ESP.maxDist then
-            for _, d in pairs(obj) do d.Visible = false end
-            continue
-        end
-
-        -- project to screen
-        local rootPos, onScreenRoot = Camera:WorldToViewportPoint(root.Position)
-        local headPos, onScreenHead = Camera:WorldToViewportPoint(head.Position + Vector3.new(0,0.5,0))
-        local feetPos, _ = Camera:WorldToViewportPoint(root.Position - Vector3.new(0,2.8,0))
-
-        if not onScreenRoot then
+        -- hide if dead or no char
+        if not root or not head or not hum or hum.Health <= 0 then
             for _, d in pairs(obj) do d.Visible = false end
             continue
         end
 
         local role = getRole(player)
         local col  = CFG.ESP[role].color
+        local dist = math.floor((Camera.CFrame.Position - root.Position).Magnitude)
 
-        -- box from feet to head
-        local boxH = math.abs(headPos.Y - feetPos.Y)
-        local boxW = boxH * 0.5
-        local boxX = headPos.X - boxW * 0.5
-        local boxY = headPos.Y
+        -- project points — use WorldToViewportPoint
+        -- *the screen peels open, every player bleeds their color*
+        local headVP, headVis = Camera:WorldToViewportPoint(head.Position + Vector3.new(0, 0.6, 0))
+        local feetVP, _       = Camera:WorldToViewportPoint(root.Position - Vector3.new(0, 2.8, 0))
+        local rootVP, rootVis = Camera:WorldToViewportPoint(root.Position)
 
-        if obj.box then
-            obj.boxOutline.Size     = Vector2.new(boxW, boxH)
-            obj.boxOutline.Position = Vector2.new(boxX, boxY)
-            obj.boxOutline.Visible  = true
+        -- even if behind camera, keep tracers pointing direction
+        -- box only when on screen
+        local onScreen = headVis and rootVP.Z > 0
 
-            obj.box.Color    = col
-            obj.box.Size     = Vector2.new(boxW, boxH)
-            obj.box.Position = Vector2.new(boxX, boxY)
-            obj.box.Visible  = true
+        -- BOX
+        if CFG.ESP.box then
+            if onScreen then
+                local boxH = math.abs(headVP.Y - feetVP.Y)
+                local boxW = math.max(boxH * 0.45, 20) -- min width so tiny targets still show
+                local boxX = headVP.X - boxW * 0.5
+                local boxY = headVP.Y
+
+                obj.boxOut.Size     = Vector2.new(boxW, boxH)
+                obj.boxOut.Position = Vector2.new(boxX, boxY)
+                obj.boxOut.Visible  = true
+
+                obj.box.Color    = col
+                obj.box.Size     = Vector2.new(boxW, boxH)
+                obj.box.Position = Vector2.new(boxX, boxY)
+                obj.box.Visible  = true
+            else
+                obj.boxOut.Visible = false
+                obj.box.Visible    = false
+            end
         end
 
-        if obj.tracer then
-            local screenCenter = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y)
-            obj.tracerOutline.From    = screenCenter
-            obj.tracerOutline.To      = Vector2.new(rootPos.X, rootPos.Y)
-            obj.tracerOutline.Visible = true
+        -- TRACER — always visible even off screen (points toward player)
+        if CFG.ESP.tracers then
+            local screenBottom = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y)
+            local targetPoint  = Vector2.new(rootVP.X, rootVP.Y)
+
+            -- if behind camera, flip the point so tracer points toward edge
+            if rootVP.Z < 0 then
+                targetPoint = Vector2.new(
+                    Camera.ViewportSize.X - rootVP.X,
+                    Camera.ViewportSize.Y - rootVP.Y
+                )
+            end
+
+            obj.tracerOut.From    = screenBottom
+            obj.tracerOut.To      = targetPoint
+            obj.tracerOut.Visible = CFG.ESP.tracers
+            obj.tracerOut.Color   = Color3.new(0,0,0)
 
             obj.tracer.Color   = col
-            obj.tracer.From    = screenCenter
-            obj.tracer.To      = Vector2.new(rootPos.X, rootPos.Y)
-            obj.tracer.Visible = true
+            obj.tracer.From    = screenBottom
+            obj.tracer.To      = targetPoint
+            obj.tracer.Visible = CFG.ESP.tracers
         end
 
-        if obj.label then
-            local distStr = CFG.ESP.distance and (" [" .. math.floor(dist) .. "m]") or ""
-            obj.label.Text     = CFG.ESP[role].label .. " " .. player.Name .. distStr
+        -- NAME LABEL
+        if CFG.ESP.names and onScreen then
+            obj.label.Text     = "[" .. CFG.ESP[role].label .. "] " .. player.Name
             obj.label.Color    = col
-            obj.label.Position = Vector2.new(headPos.X, headPos.Y - 18)
+            obj.label.Position = Vector2.new(headVP.X, headVP.Y - 20)
             obj.label.Visible  = true
+        else
+            obj.label.Visible = false
+        end
+
+        -- DISTANCE LABEL
+        if CFG.ESP.distance and onScreen then
+            obj.distLabel.Text     = dist .. "m"
+            obj.distLabel.Color    = Color3.fromRGB(200, 200, 200)
+            obj.distLabel.Position = Vector2.new(headVP.X, headVP.Y - 6)
+            obj.distLabel.Visible  = true
+        else
+            obj.distLabel.Visible = false
         end
     end
 end
 
--- init ESP for existing players
 for _, p in ipairs(Players:GetPlayers()) do buildESP(p) end
 Players.PlayerAdded:Connect(buildESP)
 Players.PlayerRemoving:Connect(removeESP)
 
 -- ============================================================
---  SHERIFF AIMBOT
---  only fires when local role == sheriff
---  locks to murderer Head bone, CFrame lerp smoothing
+--  SKYBOX
 -- ============================================================
 
+local function applySkybox(name)
+    local preset = CFG.SKYBOX.presets[name]
+    if not preset then return end
+    local sky = Lighting:FindFirstChildOfClass("Sky") or Instance.new("Sky", Lighting)
+    for face, id in pairs(preset) do sky[face] = id end
+    CFG.SKYBOX.current = name
+end
+
+-- ============================================================
+--  AIMBOT
+-- ============================================================
+
+local aimbotActive = false
+
+UserInputService.InputBegan:Connect(function(i, gpe)
+    if gpe then return end
+    if i.KeyCode == CFG.AIMBOT.key then aimbotActive = true end
+end)
+UserInputService.InputEnded:Connect(function(i)
+    if i.KeyCode == CFG.AIMBOT.key then aimbotActive = false end
+end)
+
 local function getMurdererTarget()
-    local closest = nil
-    local closestDist = math.huge
-
-    for _, player in ipairs(Players:GetPlayers()) do
-        if player == LocalPlayer then continue end
-        local role = getRole(player)
-        if role ~= "murderer" then continue end
-
-        local char = player.Character
+    local closest, closestDist = nil, math.huge
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p == LocalPlayer then continue end
+        if getRole(p) ~= "murderer" then continue end
+        local char = p.Character
         local bone = char and char:FindFirstChild(CFG.AIMBOT.bone)
         if not bone then continue end
-
-        local dist = (Camera.CFrame.Position - bone.Position).Magnitude
-        if dist < closestDist then
-            closestDist = dist
-            closest = bone
-        end
+        local d = (Camera.CFrame.Position - bone.Position).Magnitude
+        if d < closestDist then closestDist = d; closest = bone end
     end
     return closest
 end
 
-local aimbotActive = false
-
-UserInputService.InputBegan:Connect(function(input, gpe)
-    if gpe then return end
-    if input.KeyCode == CFG.AIMBOT.key then
-        aimbotActive = true
-    end
-end)
-
-UserInputService.InputEnded:Connect(function(input)
-    if input.KeyCode == CFG.AIMBOT.key then
-        aimbotActive = false
-    end
-end)
-
 -- ============================================================
---  SKYBOX MANAGER
---  injects Sky object into Lighting, swaps textures live
+--  GUI — draggable, clean dark theme
 -- ============================================================
 
-local function applySkybox(presetName)
-    local preset = CFG.SKYBOX.presets[presetName]
-    if not preset then
-        warn("[SKYBOX] unknown preset: " .. tostring(presetName))
-        return
-    end
+-- destroy old gui if re-running
+local oldGui = LocalPlayer.PlayerGui:FindFirstChild("MM2Hub")
+if oldGui then oldGui:Destroy() end
 
-    local sky = Lighting:FindFirstChildOfClass("Sky")
-    if not sky then
-        sky = Instance.new("Sky")
-        sky.Parent = Lighting
-    end
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name            = "MM2Hub"
+ScreenGui.ResetOnSpawn    = false
+ScreenGui.ZIndexBehavior  = Enum.ZIndexBehavior.Sibling
+ScreenGui.Parent          = LocalPlayer.PlayerGui
 
-    for face, assetId in pairs(preset) do
-        sky[face] = assetId
-    end
-    -- *leaning back* boom, sky replaced, six faces at once
+-- main frame
+local Main = Instance.new("Frame")
+Main.Name            = "Main"
+Main.Size            = UDim2.new(0, 280, 0, 380)
+Main.Position        = UDim2.new(0, 40, 0, 40)
+Main.BackgroundColor3 = Color3.fromRGB(18, 18, 22)
+Main.BorderSizePixel = 0
+Main.Active          = true
+Main.Parent          = ScreenGui
+
+Instance.new("UICorner", Main).CornerRadius = UDim.new(0, 10)
+
+-- drop shadow effect
+local Shadow = Instance.new("ImageLabel")
+Shadow.Size              = UDim2.new(1, 30, 1, 30)
+Shadow.Position          = UDim2.new(0, -15, 0, -15)
+Shadow.BackgroundTransparency = 1
+Shadow.Image             = "rbxassetid://5554236805"
+Shadow.ImageColor3       = Color3.new(0,0,0)
+Shadow.ImageTransparency = 0.5
+Shadow.ScaleType         = Enum.ScaleType.Slice
+Shadow.SliceCenter       = Rect.new(23,23,277,277)
+Shadow.ZIndex            = 0
+Shadow.Parent            = Main
+
+-- title bar
+local TitleBar = Instance.new("Frame")
+TitleBar.Name              = "TitleBar"
+TitleBar.Size              = UDim2.new(1, 0, 0, 38)
+TitleBar.BackgroundColor3  = Color3.fromRGB(24, 24, 32)
+TitleBar.BorderSizePixel   = 0
+TitleBar.Parent            = Main
+Instance.new("UICorner", TitleBar).CornerRadius = UDim.new(0, 10)
+
+-- fix bottom corners of titlebar
+local TitleFix = Instance.new("Frame")
+TitleFix.Size             = UDim2.new(1, 0, 0, 10)
+TitleFix.Position         = UDim2.new(0, 0, 1, -10)
+TitleFix.BackgroundColor3 = Color3.fromRGB(24, 24, 32)
+TitleFix.BorderSizePixel  = 0
+TitleFix.Parent           = TitleBar
+
+-- accent line under title
+local Accent = Instance.new("Frame")
+Accent.Size             = UDim2.new(1, 0, 0, 2)
+Accent.Position         = UDim2.new(0, 0, 1, -1)
+Accent.BackgroundColor3 = Color3.fromRGB(99, 102, 241)
+Accent.BorderSizePixel  = 0
+Accent.Parent           = TitleBar
+
+local TitleLabel = Instance.new("TextLabel")
+TitleLabel.Text              = "⚡ MM2 Hub"
+TitleLabel.Size              = UDim2.new(1, -40, 1, 0)
+TitleLabel.Position          = UDim2.new(0, 12, 0, 0)
+TitleLabel.BackgroundTransparency = 1
+TitleLabel.TextColor3        = Color3.fromRGB(240, 240, 255)
+TitleLabel.TextSize          = 15
+TitleLabel.Font              = Enum.Font.GothamBold
+TitleLabel.TextXAlignment    = Enum.TextXAlignment.Left
+TitleLabel.Parent            = TitleBar
+
+-- minimize button
+local MinBtn = Instance.new("TextButton")
+MinBtn.Size                  = UDim2.new(0, 26, 0, 26)
+MinBtn.Position              = UDim2.new(1, -32, 0, 6)
+MinBtn.BackgroundColor3      = Color3.fromRGB(40, 40, 52)
+MinBtn.Text                  = "–"
+MinBtn.TextColor3            = Color3.fromRGB(180,180,200)
+MinBtn.TextSize              = 16
+MinBtn.Font                  = Enum.Font.GothamBold
+MinBtn.BorderSizePixel       = 0
+MinBtn.Parent                = TitleBar
+Instance.new("UICorner", MinBtn).CornerRadius = UDim.new(0, 6)
+
+-- content frame
+local Content = Instance.new("ScrollingFrame")
+Content.Name                    = "Content"
+Content.Size                    = UDim2.new(1, 0, 1, -42)
+Content.Position                = UDim2.new(0, 0, 0, 42)
+Content.BackgroundTransparency  = 1
+Content.BorderSizePixel         = 0
+Content.ScrollBarThickness      = 3
+Content.ScrollBarImageColor3    = Color3.fromRGB(99,102,241)
+Content.CanvasSize              = UDim2.new(0, 0, 0, 0)
+Content.AutomaticCanvasSize     = Enum.AutomaticSize.Y
+Content.Parent                  = Main
+
+local ListLayout = Instance.new("UIListLayout")
+ListLayout.Padding          = UDim.new(0, 6)
+ListLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+ListLayout.Parent           = Content
+
+Instance.new("UIPadding", Content).PaddingTop = UDim.new(0, 10)
+
+-- ============================================================
+--  GUI HELPERS
+-- ============================================================
+
+local COLORS = {
+    toggle_on   = Color3.fromRGB(99, 102, 241),
+    toggle_off  = Color3.fromRGB(45, 45, 58),
+    section     = Color3.fromRGB(28, 28, 36),
+    text        = Color3.fromRGB(210, 210, 230),
+    subtext     = Color3.fromRGB(130, 130, 160),
+    btn         = Color3.fromRGB(35, 35, 48),
+    btn_hover   = Color3.fromRGB(50, 50, 68),
+}
+
+local function makeSection(title)
+    local sec = Instance.new("Frame")
+    sec.Size             = UDim2.new(1, -20, 0, 28)
+    sec.BackgroundTransparency = 1
+    sec.Parent           = Content
+
+    local lbl = Instance.new("TextLabel")
+    lbl.Size             = UDim2.new(1, 0, 1, 0)
+    lbl.BackgroundTransparency = 1
+    lbl.Text             = title:upper()
+    lbl.TextColor3       = Color3.fromRGB(99,102,241)
+    lbl.TextSize         = 11
+    lbl.Font             = Enum.Font.GothamBold
+    lbl.TextXAlignment   = Enum.TextXAlignment.Left
+    lbl.Parent           = sec
+
+    -- line
+    local line = Instance.new("Frame")
+    line.Size            = UDim2.new(1, 0, 0, 1)
+    line.Position        = UDim2.new(0, 0, 1, -1)
+    line.BackgroundColor3 = Color3.fromRGB(40,40,55)
+    line.BorderSizePixel = 0
+    line.Parent          = sec
+
+    return sec
+end
+
+local function makeToggle(labelText, default, callback)
+    local row = Instance.new("Frame")
+    row.Size             = UDim2.new(1, -20, 0, 36)
+    row.BackgroundColor3 = COLORS.section
+    row.BorderSizePixel  = 0
+    row.Parent           = Content
+    Instance.new("UICorner", row).CornerRadius = UDim.new(0, 8)
+
+    local lbl = Instance.new("TextLabel")
+    lbl.Size             = UDim2.new(1, -60, 1, 0)
+    lbl.Position         = UDim2.new(0, 12, 0, 0)
+    lbl.BackgroundTransparency = 1
+    lbl.Text             = labelText
+    lbl.TextColor3       = COLORS.text
+    lbl.TextSize         = 13
+    lbl.Font             = Enum.Font.Gotham
+    lbl.TextXAlignment   = Enum.TextXAlignment.Left
+    lbl.Parent           = row
+
+    -- toggle pill
+    local pill = Instance.new("Frame")
+    pill.Size            = UDim2.new(0, 40, 0, 20)
+    pill.Position        = UDim2.new(1, -52, 0.5, -10)
+    pill.BackgroundColor3 = default and COLORS.toggle_on or COLORS.toggle_off
+    pill.BorderSizePixel = 0
+    pill.Parent          = row
+    Instance.new("UICorner", pill).CornerRadius = UDim.new(1, 0)
+
+    local knob = Instance.new("Frame")
+    knob.Size            = UDim2.new(0, 14, 0, 14)
+    knob.Position        = default and UDim2.new(1, -17, 0.5, -7) or UDim2.new(0, 3, 0.5, -7)
+    knob.BackgroundColor3 = Color3.new(1,1,1)
+    knob.BorderSizePixel = 0
+    knob.Parent          = pill
+    Instance.new("UICorner", knob).CornerRadius = UDim.new(1, 0)
+
+    local state = default
+    local btn = Instance.new("TextButton")
+    btn.Size             = UDim2.new(1, 0, 1, 0)
+    btn.BackgroundTransparency = 1
+    btn.Text             = ""
+    btn.Parent           = row
+
+    btn.MouseButton1Click:Connect(function()
+        state = not state
+        local ti = TweenInfo.new(0.15, Enum.EasingStyle.Quad)
+        TweenService:Create(pill, ti, { BackgroundColor3 = state and COLORS.toggle_on or COLORS.toggle_off }):Play()
+        TweenService:Create(knob, ti, { Position = state and UDim2.new(1,-17,0.5,-7) or UDim2.new(0,3,0.5,-7) }):Play()
+        callback(state)
+    end)
+
+    return row
+end
+
+local function makeButton(labelText, color, callback)
+    local btn = Instance.new("TextButton")
+    btn.Size             = UDim2.new(1, -20, 0, 34)
+    btn.BackgroundColor3 = color or COLORS.btn
+    btn.BorderSizePixel  = 0
+    btn.Text             = labelText
+    btn.TextColor3       = Color3.new(1,1,1)
+    btn.TextSize         = 13
+    btn.Font             = Enum.Font.GothamBold
+    btn.AutoButtonColor  = false
+    btn.Parent           = Content
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 8)
+
+    btn.MouseEnter:Connect(function()
+        TweenService:Create(btn, TweenInfo.new(0.1), { BackgroundColor3 = Color3.fromRGB(
+            math.clamp((color or COLORS.btn).R*255 + 20, 0, 255),
+            math.clamp((color or COLORS.btn).G*255 + 20, 0, 255),
+            math.clamp((color or COLORS.btn).B*255 + 20, 0, 255)
+        )}):Play()
+    end)
+    btn.MouseLeave:Connect(function()
+        TweenService:Create(btn, TweenInfo.new(0.1), { BackgroundColor3 = color or COLORS.btn }):Play()
+    end)
+    btn.MouseButton1Click:Connect(callback)
+    return btn
+end
+
+local function makeLabel(txt, col)
+    local lbl = Instance.new("TextLabel")
+    lbl.Size             = UDim2.new(1, -20, 0, 22)
+    lbl.BackgroundTransparency = 1
+    lbl.Text             = txt
+    lbl.TextColor3       = col or COLORS.subtext
+    lbl.TextSize         = 12
+    lbl.Font             = Enum.Font.Gotham
+    lbl.TextXAlignment   = Enum.TextXAlignment.Left
+    lbl.Parent           = Content
+    return lbl
 end
 
 -- ============================================================
---  COMMAND PARSER
---  chat commands: /esp on|off, /skybox <name>, /aimbot on|off
+--  BUILD GUI SECTIONS
 -- ============================================================
 
-local function parseCommand(msg)
-    msg = msg:lower():gsub("^%s+", "")
+-- ESP SECTION
+makeSection("ESP")
 
-    if msg == "/esp on" then
-        CFG.ESP.enabled = true
-        print("[MM2] ESP ON")
+makeToggle("ESP Enabled", CFG.ESP.enabled, function(v) CFG.ESP.enabled = v end)
+makeToggle("Boxes", CFG.ESP.box, function(v) CFG.ESP.box = v end)
+makeToggle("Tracers", CFG.ESP.tracers, function(v) CFG.ESP.tracers = v end)
+makeToggle("Names & Roles", CFG.ESP.names, function(v) CFG.ESP.names = v end)
+makeToggle("Show Distance", CFG.ESP.distance, function(v) CFG.ESP.distance = v end)
 
-    elseif msg == "/esp off" then
-        CFG.ESP.enabled = false
-        for _, obj in pairs(espObjects) do
-            for _, d in pairs(obj) do d.Visible = false end
-        end
-        print("[MM2] ESP OFF")
+-- AIMBOT SECTION
+makeSection("Aimbot")
+makeToggle("Aimbot (Hold Q)", CFG.AIMBOT.enabled, function(v) CFG.AIMBOT.enabled = v end)
+makeLabel("Targets: Murderer only when you're Sheriff", COLORS.subtext)
 
-    elseif msg:sub(1,8) == "/skybox " then
-        local name = msg:sub(9)
-        name = name:sub(1,1):upper() .. name:sub(2)  -- capitalize
+-- SKYBOX SECTION
+makeSection("Skybox")
+makeLabel("Current: " .. CFG.SKYBOX.current, COLORS.subtext)
+
+local skyboxNames = { "Default", "Night", "Blood", "Bliss" }
+local skyColors = {
+    Default = Color3.fromRGB(40, 80, 120),
+    Night   = Color3.fromRGB(20, 20, 60),
+    Blood   = Color3.fromRGB(100, 20, 20),
+    Bliss   = Color3.fromRGB(60, 120, 80),
+}
+
+local currentLabel = makeLabel("Active: Default", Color3.fromRGB(99,102,241))
+
+for _, name in ipairs(skyboxNames) do
+    makeButton("🌌 " .. name, skyColors[name], function()
         applySkybox(name)
-        print("[MM2] Skybox -> " .. name)
-
-    elseif msg == "/aimbot on" then
-        CFG.AIMBOT.enabled = true
-        print("[MM2] Aimbot ON")
-
-    elseif msg == "/aimbot off" then
-        CFG.AIMBOT.enabled = false
-        print("[MM2] Aimbot OFF")
-
-    elseif msg == "/help" then
-        print([[
-[MM2 SCRIPT COMMANDS]
-  /esp on|off
-  /aimbot on|off
-  /skybox Default
-  /skybox Night
-  /skybox Bliss
-  /skybox Blood
-  hold Q (in-game) = aimbot lock on murderer
-        ]])
-    end
+        currentLabel.Text = "Active: " .. name
+    end)
 end
 
--- hook chat (executor-side, no sendchat needed)
-LocalPlayer.Chatted:Connect(parseCommand)
+-- CREDITS
+makeSection("Info")
+makeLabel("ESP: no distance limit, through walls", COLORS.subtext)
+makeLabel("Aimbot: hold Q, sheriff only", COLORS.subtext)
+makeLabel("v2.0 | MM2 Hub", Color3.fromRGB(99,102,241))
+
+-- ============================================================
+--  DRAGGING
+-- ============================================================
+
+local dragging, dragStart, startPos
+
+TitleBar.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        dragging  = true
+        dragStart = input.Position
+        startPos  = Main.Position
+    end
+end)
+
+TitleBar.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        dragging = false
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+        local delta = input.Position - dragStart
+        Main.Position = UDim2.new(
+            startPos.X.Scale, startPos.X.Offset + delta.X,
+            startPos.Y.Scale, startPos.Y.Offset + delta.Y
+        )
+    end
+end)
+
+-- minimize toggle
+local minimized = false
+MinBtn.MouseButton1Click:Connect(function()
+    minimized = not minimized
+    TweenService:Create(Main, TweenInfo.new(0.2, Enum.EasingStyle.Quad), {
+        Size = minimized and UDim2.new(0, 280, 0, 40) or UDim2.new(0, 280, 0, 380)
+    }):Play()
+    Content.Visible = not minimized
+    MinBtn.Text = minimized and "+" or "–"
+end)
 
 -- ============================================================
 --  MAIN LOOP
 -- ============================================================
 
-RunService.RenderStepped:Connect(function(dt)
-    -- ESP update
-    if CFG.ESP.enabled then
-        updateESP()
-    end
+RunService.RenderStepped:Connect(function()
+    updateESP()
 
-    -- Aimbot: only when sheriff + key held
     if CFG.AIMBOT.enabled and aimbotActive then
-        local myRole = getRole(LocalPlayer)
-        if myRole == "sheriff" then
+        if getRole(LocalPlayer) == "sheriff" then
             local target = getMurdererTarget()
             if target then
-                local targetPos = target.Position
-                local currentCF = Camera.CFrame
-                local lookCF    = CFrame.new(currentCF.Position, targetPos)
-                -- lerp camera toward target, smoothing is [0..1]
-                -- *the crosshair drifts, locks, breathes onto the skull*
-                Camera.CFrame = currentCF:Lerp(lookCF, CFG.AIMBOT.smoothing)
+                local lookCF = CFrame.new(Camera.CFrame.Position, target.Position)
+                Camera.CFrame = Camera.CFrame:Lerp(lookCF, CFG.AIMBOT.smoothing)
             end
         end
     end
 end)
 
-print("[MM2 SCRIPT] Loaded. /help for commands. Hold Q = aimbot lock.")
+print("[MM2 Hub v2] Loaded. GUI активен.")
